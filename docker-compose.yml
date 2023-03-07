@@ -1,0 +1,144 @@
+version: '2.1'
+services:
+  db:
+    hostname: db
+    image: 'mariadb:10.4'
+    shm_size: 2gb
+    environment:
+      - MYSQL_ROOT_PASSWORD=magento2
+      - MYSQL_DATABASE=magento2
+      - MYSQL_USER=magento2
+      - MYSQL_PASSWORD=magento2
+    ports:
+      - '3306:3306'
+    volumes:
+      - '.:/var/www:delegated'
+      - 'mymagento-magento-db:/var/lib/mysql'
+    healthcheck:
+      test: 'mysqladmin ping -h localhost -pmagento2'
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    networks:
+      magento:
+        aliases:
+          - db.magento2.docker
+  redis:
+    hostname: redis
+    image: 'redis:6.2'
+    volumes:
+      - '.:/var/www:delegated'
+    ports:
+      - '6379:6379'
+    sysctls:
+      net.core.somaxconn: 1024
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 20000
+        hard: 40000
+    healthcheck:
+      test: 'redis-cli ping || exit 1'
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    networks:
+      magento:
+        aliases:
+          - redis.magento2.docker
+  opensearch:
+    hostname: opensearch.magento2.docker
+    build: docker/opensearch/.
+    image: 'the_it_nerd/opensearch'
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - '9200:9200'
+    environment:
+      - cluster.name=docker-cluster
+      - discovery.type=single-node
+      - discovery.seed_hosts=opensearch
+      - bootstrap.memory_lock=true
+      - DISABLE_SECURITY_PLUGIN=true
+    networks:
+      magento:
+        aliases:
+          - opensearch.magento2.docker
+  php:
+    hostname: php
+    build: docker/php/.
+    image: 'the_it_nerd/php'
+    volumes:
+      - '.:/var/www:delegated'
+    networks:
+      magento:
+        aliases:
+          - php
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    hostname: web
+    build: docker/web/.
+    image: 'the_it_nerd/web'
+    volumes:
+      - '.:/var/www:delegated'
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      - WITH_XDEBUG=1
+      - NGINX_WORKER_PROCESSES=1
+      - NGINX_WORKER_CONNECTIONS=1024
+    networks:
+      magento:
+        aliases:
+          - web
+    depends_on:
+      varnish:
+        condition: service_started
+  web_app:
+    hostname: web
+    build: docker/web_app/.
+    image: 'the_it_nerd/web_app'
+    volumes:
+      - '.:/var/www:delegated'
+    environment:
+      - WITH_XDEBUG=1
+      - NGINX_WORKER_PROCESSES=1
+      - NGINX_WORKER_CONNECTIONS=1024
+    networks:
+      magento:
+        aliases:
+          - web_app
+    depends_on:
+      php:
+        condition: service_started
+  varnish:
+    hostname: varnish
+    build: docker/varnish/.
+    image: 'the_it_nerd/varnish'
+    networks:
+      magento:
+        aliases:
+          - varnish
+    depends_on:
+      web_app:
+        condition: service_started
+  mailhog:
+    hostname: mailhog
+    image: 'mailhog/mailhog:latest'
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    networks:
+      magento:
+        aliases:
+          - mailhog
+volumes:
+  mymagento-magento-db: {  }
+networks:
+  magento:
+    driver: bridge
